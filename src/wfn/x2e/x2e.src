@@ -1,0 +1,542 @@
+!########################################
+subroutine x2e_init()
+
+  implicit none
+
+end subroutine x2e_init
+
+!########################################
+subroutine x2e_final()
+
+  implicit none
+
+end subroutine x2e_final
+
+!########################################
+real(8) function x2e_hprod(calene, lfield, wfn, hwfn)
+
+  use const_mod, only : zero, czero
+  use grid_mod, only : ngrid
+  use mol_mod, only : enen
+
+  implicit none
+  logical, intent(in) :: calene
+  real(8), intent(in) :: lfield
+  complex(8), intent(in)  :: wfn(ngrid, ngrid)
+  complex(8), intent(out) :: hwfn(ngrid, ngrid)
+
+  integer :: igrid, jgrid
+  integer :: ng0, ng1, ngpp, iproc, nproc
+  integer omp_get_num_threads, omp_get_thread_num
+  real(8), external :: x2e_ene
+
+  x2e_hprod = enen
+!$omp parallel default(shared) private(igrid, jgrid, ng0, ng1, iproc) reduction(+:x2e_hprod)
+  nproc = omp_get_num_threads()
+  ngpp = (ngrid - 2) / nproc
+  iproc = omp_get_thread_num()
+  if (iproc == nproc - 1) then
+     ng0 = ngpp * iproc + 2
+     ng1 = ngrid - 1
+  else
+     ng0 = ngpp * iproc + 2
+     ng1 = ng0 + ngpp - 1
+  end if
+
+  hwfn(1:ngrid, ng0:ng1) = czero
+  call x2e_hprod_kinetic(wfn, hwfn, ng0, ng1)
+  call x2e_hprod_potential(lfield, wfn, hwfn, ng0, ng1)
+
+  if (calene) then
+     x2e_hprod = x2e_hprod + x2e_ene(wfn, hwfn, ng0, ng1)
+  end if
+!$omp end parallel
+
+  ! symmetrization
+  do igrid = 1, ngrid
+     do jgrid = igrid + 1, ngrid
+        hwfn(jgrid, igrid) = hwfn(igrid, jgrid)
+     end do
+  end do
+
+  return
+
+end function x2e_hprod
+
+!########################################
+complex(8) function x2e_iprod(rmax, wfnl, wfnr)
+
+  use const_mod, only : two, czero
+  use grid_mod, only : ngrid, dgrid
+
+  implicit none
+  real(8), intent(in) :: rmax
+  complex(8), intent(in) :: wfnl(1:ngrid, 1:ngrid)
+  complex(8), intent(in) :: wfnr(1:ngrid, 1:ngrid)
+
+  integer :: igrid, jgrid, llgrid, ulgrid
+  complex(8) :: val, tmp
+  integer :: ng0, ng1, ngpp, iproc, nproc
+  integer omp_get_num_threads, omp_get_thread_num
+
+  call get_irmax(rmax, llgrid, ulgrid, 2, ngrid-1)
+
+  x2e_iprod = czero
+!$omp parallel default(shared) private(igrid, jgrid, ng0, ng1, iproc, val, tmp) reduction(+:x2e_iprod)
+  nproc = omp_get_num_threads()
+  ngpp = (ulgrid - llgrid + 1) / nproc
+  iproc = omp_get_thread_num()
+  if (iproc == nproc - 1) then
+     ng0 = ngpp * iproc + 1
+     ng1 = ulgrid
+  else
+     ng0 = ngpp * iproc + 1
+     ng1 = ng0 + ngpp - 1
+  end if
+
+  val = czero
+  tmp = czero
+  do igrid = ng0, ng1
+     tmp = tmp + conjg(wfnl(igrid, igrid)) * wfnr(igrid, igrid)
+  end do
+  val = val + tmp
+
+  tmp = czero
+  do igrid = ng0, ng1
+     do jgrid = llgrid, igrid - 1
+        tmp = tmp + conjg(wfnl(jgrid, igrid)) * wfnr(jgrid, igrid)
+     end do
+  end do
+  val = val + tmp * two
+
+  val = val * dgrid ** two
+  x2e_iprod = x2e_iprod + val
+!$omp end parallel
+  
+  return
+
+end function x2e_iprod
+
+!########################################
+real(8) function x2e_op1e(iop, rmax, wfn)
+
+  use const_mod, only : two, zero, czero
+  use grid_mod, only : ngrid, dgrid, x, gv1
+
+  implicit none
+  integer, intent(in) :: iop
+  real(8), intent(in) :: rmax
+  complex(8), intent(in) :: wfn(1:ngrid, 1:ngrid)
+
+  integer igrid, jgrid, llgrid, ulgrid
+  complex(8) :: val, tmp, v12
+  complex(8), allocatable :: v(:)
+  integer :: ng0, ng1, ngpp, iproc, nproc
+  integer omp_get_num_threads, omp_get_thread_num
+
+  call get_irmax(rmax, llgrid, ulgrid, 2, ngrid-1)
+  allocate(v(ngrid))
+  if(iop == 0) then
+     v(1:ngrid) = x(1:ngrid)
+  else if (iop == 1) then
+     v(1:ngrid) = gv1(1:ngrid)
+  end if
+
+  x2e_op1e = zero
+!$omp parallel default(shared) private(igrid, jgrid, ng0, ng1, iproc, val, tmp, v12) reduction(+:x2e_op1e)
+  nproc = omp_get_num_threads()
+  ngpp = (ulgrid - llgrid + 1) / nproc
+  iproc = omp_get_thread_num()
+  if (iproc == nproc - 1) then
+     ng0 = ngpp * iproc + 1
+     ng1 = ulgrid
+  else
+     ng0 = ngpp * iproc + 1
+     ng1 = ng0 + ngpp - 1
+  end if
+
+! don't work here, but why?      if(iop == 0) then
+! don't work here, but why?         v(ng0:ng1) = x(ng0:ng1)
+! don't work here, but why?      end if
+
+  val = czero
+  tmp = czero
+  do igrid = ng0, ng1
+     v12 = v(igrid) + v(igrid)
+     tmp = tmp + conjg(wfn(igrid, igrid)) * v12 * wfn(igrid, igrid)
+  end do
+  val = val + tmp
+
+  tmp = czero
+  do igrid = ng0, ng1
+     do jgrid = llgrid, igrid - 1
+        v12 = v(igrid) + v(jgrid)
+        tmp = tmp + conjg(wfn(jgrid, igrid)) * v12 * wfn(jgrid, igrid)
+     end do
+  end do
+  val = val + tmp * two
+
+  val = val * dgrid**two
+  x2e_op1e = x2e_op1e + real(val)
+!$omp end parallel
+      
+  deallocate(v)
+  return
+
+end function x2e_op1e
+
+!########################################
+subroutine x2e_ort(wfn)
+
+  use const_mod, only : one
+  use grid_mod, only : ngrid, dgrid
+
+  implicit none
+  complex(8), intent(inout) :: wfn(1:ngrid, 1:ngrid)
+
+  real(8) :: norm, fac
+  complex(8), external :: x2e_iprod
+
+  norm = sqrt(real(x2e_iprod(-one, wfn, wfn)))
+  fac = one / norm
+  wfn(1:ngrid, 1:ngrid) = wfn(1:ngrid, 1:ngrid) * fac
+
+end subroutine x2e_ort
+
+!########################################
+real(8) function x2e_norm(rmax, wfn, p0, p1, p2)
+
+  use const_mod, only : zero, two, czero
+  use grid_mod, only : ngrid, dgrid
+
+  implicit none
+  real(8), intent(in) :: rmax
+  complex(8), intent(in) :: wfn(1:ngrid, 1:ngrid)
+  real(8), intent(out) :: p0, p1, p2
+
+  integer :: igrid, jgrid, llgrid, ulgrid
+  complex(8) :: tmp
+
+  call get_irmax(rmax, llgrid, ulgrid, 2, ngrid-1)
+
+  p0 = zero
+  p1 = zero
+  p2 = zero
+
+  tmp = czero
+  do igrid = llgrid, ulgrid
+     tmp = tmp + conjg(wfn(igrid, igrid)) * wfn(igrid, igrid)
+  end do
+  p0 = p0 + real(tmp)
+
+  tmp = czero
+  do igrid = llgrid, ulgrid
+     do jgrid = llgrid, igrid - 1
+        tmp = tmp + conjg(wfn(jgrid, igrid)) * wfn(jgrid, igrid)
+     end do
+  end do
+  p0 = p0 + real(tmp) * two
+
+  tmp = czero
+  do igrid = llgrid, ulgrid
+     do jgrid = 2, llgrid - 1
+        tmp = tmp + conjg(wfn(jgrid, igrid)) * wfn(jgrid, igrid)
+     end do
+  end do
+  do igrid = ulgrid + 1, ngrid - 1
+     do jgrid = llgrid, ulgrid
+        tmp = tmp + conjg(wfn(jgrid, igrid)) * wfn(jgrid, igrid)
+     end do
+  end do
+  p1 = p1 + real(tmp) * two
+
+  tmp = czero
+  do igrid = 2, llgrid - 1
+     tmp = tmp + conjg(wfn(igrid, igrid)) * wfn(igrid, igrid)
+  end do
+  do igrid = ulgrid + 1, ngrid - 1
+     tmp = tmp + conjg(wfn(igrid, igrid)) * wfn(igrid, igrid)
+  end do
+  p2 = p2 + real(tmp)
+
+  tmp = czero
+  do igrid = 2, llgrid - 1
+     do jgrid = 2, igrid - 1
+        tmp = tmp + conjg(wfn(jgrid, igrid)) * wfn(jgrid, igrid)
+     end do
+  end do
+  do igrid = ulgrid + 1, ngrid - 1
+     do jgrid = ulgrid + 1, igrid - 1
+        tmp = tmp + conjg(wfn(jgrid, igrid)) * wfn(jgrid, igrid)
+     end do
+  end do
+  do igrid = ulgrid + 1, ngrid - 1
+     do jgrid = 2, llgrid - 1
+        tmp = tmp + conjg(wfn(jgrid, igrid)) * wfn(jgrid, igrid)
+     end do
+  end do
+  p2 = p2 + real(tmp) * two
+
+  p0 = p0 * dgrid ** two
+  p1 = p1 * dgrid ** two
+  p2 = p2 * dgrid ** two
+
+  x2e_norm = p0 + p1 + p2
+
+end function x2e_norm
+
+!########################################
+subroutine x2e_domask(rmax, wfn, q0, q1, q2)
+
+  use grid_mod, only : ngrid, x, xmask, mask
+
+  implicit none
+  real(8), intent(in) :: rmax
+  real(8), intent(inout) :: q0, q1, q2
+  complex(8), intent(inout) :: wfn(1:ngrid, 1:ngrid)
+
+  integer :: igrid, jgrid
+  real(8) :: absx, maski, maskij
+  real(8) :: p0, p1, p2, ptot
+  real(8), external :: x2e_norm
+
+  ptot = x2e_norm(rmax, wfn, p0, p1, p2)
+  q0 = q0 + p0
+  q1 = q1 + p1
+  q2 = q2 + p2
+
+  do igrid = 1, ngrid
+     absx = abs(x(igrid))
+     if(absx > xmask) then
+        maski = mask(igrid)
+        do jgrid = 1, igrid
+           absx = abs(x(jgrid))
+           if(absx > xmask) then
+              maskij = maski * mask(jgrid)
+           else
+              maskij = maski
+           end if
+           wfn(jgrid, igrid) = wfn(jgrid, igrid) * maskij
+           wfn(igrid, jgrid) = wfn(jgrid, igrid)
+        end do
+     else
+        do jgrid = 1, igrid
+           absx = abs(x(jgrid))
+           if(absx > xmask) then
+              wfn(jgrid, igrid) = wfn(jgrid, igrid) * mask(jgrid)
+              wfn(igrid, jgrid) = wfn(jgrid, igrid)
+           end if
+        end do
+     end if
+  end do
+
+  ptot = x2e_norm(rmax, wfn, p0, p1, p2)
+  q0 = q0 - p0
+  q1 = q1 - p1
+  q2 = q2 - p2
+
+end subroutine x2e_domask
+
+!########################################
+subroutine x2e_hprod_kinetic(wfn, hwfn, ng0, ng1)
+
+  use const_mod, only : two, half
+  use grid_mod, only : ngrid, dgrid
+
+  implicit none
+  complex(8), intent(in)    :: wfn(ngrid, ngrid)
+  complex(8), intent(inout) :: hwfn(ngrid, ngrid)
+  integer, intent(in) :: ng0, ng1
+
+  integer :: igrid, jgrid
+  complex(8) :: tmp
+  real(8) :: fac
+
+  fac = -half / (dgrid * dgrid)
+
+  do igrid = ng0, ng1
+     do jgrid = 2, igrid
+        tmp = (wfn(jgrid-1, igrid) - two * wfn(jgrid, igrid) + wfn(jgrid+1, igrid) &
+          & +  wfn(jgrid, igrid-1) - two * wfn(jgrid, igrid) + wfn(jgrid, igrid+1)) * fac
+        hwfn(jgrid, igrid) = hwfn(jgrid, igrid) + tmp
+     end do
+  end do
+
+end subroutine x2e_hprod_kinetic
+
+!########################################
+subroutine x2e_hprod_potential(lfield, wfn, hwfn, ng0, ng1)
+
+  use const_mod, only : iunit
+  use root_mod, only : icomp
+  use grid_mod, only : ngrid, x, v1, v2, imask, mask
+
+  implicit none
+  real(8), intent(in) :: lfield
+  complex(8), intent(in)    :: wfn(ngrid, ngrid)
+  complex(8), intent(inout) :: hwfn(ngrid, ngrid)
+  integer, intent(in) :: ng0, ng1
+
+  integer :: igrid, jgrid
+  complex(8) :: v12
+  complex(8), allocatable :: veff(:)
+
+  allocate(veff(ngrid))
+
+  veff(2:ngrid-1) = v1(2:ngrid-1) - lfield * x(2:ngrid-1)
+  if (imask /= 0 .and. icomp == 1) then
+     veff(2:ngrid-1) = veff(2:ngrid-1) - iunit * mask(2:ngrid-1)
+  end if
+
+  do igrid = ng0, ng1
+     do jgrid = 1, igrid
+        v12 = veff(igrid) + veff(jgrid) + v2(jgrid, igrid)
+        hwfn(jgrid, igrid) = hwfn(jgrid, igrid) + v12 * wfn(jgrid, igrid)
+     end do
+  end do
+
+  deallocate(veff)
+
+end subroutine x2e_hprod_potential
+
+!########################################
+complex(8) function x2e_ene(wfnl, wfnr, ng0, ng1)
+
+  use const_mod, only : two, czero
+  use grid_mod, only : ngrid, dgrid
+
+  implicit none
+  complex(8), intent(in) :: wfnl(1:ngrid, 1:ngrid)
+  complex(8), intent(in) :: wfnr(1:ngrid, 1:ngrid)
+  integer, intent(in) :: ng0, ng1
+  integer :: igrid, jgrid
+  complex(8) :: val, tmp
+
+  val = czero
+
+  tmp = czero
+  do igrid = ng0, ng1
+     tmp = tmp + conjg(wfnl(igrid, igrid)) * wfnr(igrid, igrid)
+  end do
+  val = val + tmp
+
+  tmp = czero
+  do igrid = ng0, ng1
+     do jgrid = 2, igrid - 1
+        tmp = tmp + conjg(wfnl(jgrid, igrid)) * wfnr(jgrid, igrid)
+     end do
+  end do
+  val = val + tmp * two
+
+  val = val * dgrid ** two
+  x2e_ene = real(val)
+
+  return
+
+end function x2e_ene
+
+!########################################
+subroutine x2e_ovlp(rmax, wfnl, wfnr, ovlp)
+
+  use grid_mod, only : ngrid
+  use wfn_mod, only : nfun
+
+  implicit none
+  real(8), intent(in) :: rmax
+  complex(8), intent(in) :: wfnl(1:ngrid, 1:ngrid)
+  complex(8), intent(in) :: wfnr(1:ngrid, 1:ngrid)
+  complex(8), intent(out) :: ovlp(1:nfun, 1:nfun)
+
+  complex(8), external :: x2e_iprod
+
+  ovlp(1, 1) = x2e_iprod(rmax, wfnl, wfnr)
+end subroutine x2e_ovlp
+
+!########################################
+integer function x2e_size()
+
+  use grid_mod, only : ngrid
+
+  implicit none
+
+  x2e_size = ngrid * ngrid
+
+end function x2e_size
+
+!########################################
+subroutine x2e_readhf(wfn)
+
+  use const_mod, only : czero
+  use grid_mod, only : ngrid
+
+  implicit none
+  complex(8), intent(inout) :: wfn(1:ngrid, 1:ngrid)
+
+  integer :: igrid, jgrid
+  complex(8), allocatable :: twfn(:)
+
+  allocate(twfn(ngrid))
+  twfn(1:ngrid) = wfn(1:ngrid, 1)
+
+  do igrid = 1, ngrid
+     do jgrid = 1, ngrid
+        wfn(jgrid, igrid) = twfn(jgrid) * twfn(igrid)
+     end do
+  end do
+
+  call x2e_ort(wfn)
+  deallocate(twfn)
+
+end subroutine x2e_readhf
+
+!########################################
+subroutine x2e_print(iunit, wfn)
+
+  use grid_mod, only : ngrid, x
+
+  implicit none
+  integer, intent(in) :: iunit
+  complex(8), intent(in) :: wfn(1:ngrid, 1:ngrid)
+
+  integer :: igrid, jgrid
+
+  write(iunit, "('x2e wavefunction:', i10)") ngrid
+  do igrid = 1, ngrid
+     do jgrid = 1, ngrid
+        write(iunit, "(4F20.10)") x(igrid), x(jgrid), wfn(igrid, jgrid)
+     end do
+  end do
+
+end subroutine x2e_print
+
+!########################################
+subroutine x2e_read(iunit, wfn)
+  use init_mod, only : iguess
+  use grid_mod, only : ngrid, x
+
+  integer, intent(in) :: iunit
+  complex(8), intent(out) :: wfn(1:ngrid, 1:ngrid)
+  character(len=256) :: line
+  integer :: igrid, jgrid, ieof, ngrid0, igridx, jgridx, offset
+  real(8) :: xx
+
+!  if (iguess == 2) stop 'x2e_readproj not yet implemented.'
+
+  rewind(iunit)
+  do
+     read(iunit, "(A)", iostat = ieof) line
+     if (ieof /= 0) stop 'error reading x2e wavefunction'
+     if (line(1:17) == 'x2e wavefunction:') then
+        read(line(18:), *) ngrid0
+        offset = (ngrid - 1) / 2 - (ngrid0 - 1) / 2
+        do igrid = 1, ngrid0
+           igridx = igrid + offset
+           do jgrid = 1, ngrid0
+              jgridx = jgrid + offset
+              read(iunit, "(4F20.10)") xx, xx, wfn(igridx, jgridx)
+           end do
+        end do
+        exit
+     end if
+  end do
+end subroutine x2e_read

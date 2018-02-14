@@ -1,0 +1,74 @@
+!######################################################################
+subroutine general_hprod_kinetic(nfunc, wfn, hwfn, ng0, ng1)
+
+  use const_mod, only : czero
+  use grid_mod, only : ngrid, dgrid
+  use grid_mod, only : fd_ohalf, fd_coeff_in, fd_coeff_l, fd_coeff_r
+  use wfn_mod, only : nfun, nfroz
+
+  implicit none
+  complex(8), intent(in)    :: wfn (0:ngrid, 1:nfunc)
+  complex(8), intent(inout) :: hwfn(0:ngrid, 1:nfunc)
+  integer, intent(in) :: ng0, ng1
+
+  complex(8) :: tmp
+  integer :: k, kgrid, igrid, ifun, icoeff, kmax
+!
+  kmax = 2 * fd_ohalf + 1
+!
+  do ifun = nfroz(1) + 1, nfunc
+
+!debug     do igrid = ng0, ng1
+!debug        tmp = wfn(igrid, ifun) * fd_coeff_in(0)
+!debug        do k = 1, fd_ohalf
+!debug           if(igrid - k >= 0)     tmp = tmp + wfn(igrid - k, ifun) * fd_coeff_in(-k)
+!debug           if(igrid + k <= ngrid) tmp = tmp + wfn(igrid + k, ifun) * fd_coeff_in(+k)
+!debug        end do
+!debug        hwfn(igrid, ifun) = hwfn(igrid, ifun) + tmp
+!debug     end do
+
+     ! inside ===============================================
+     !         q <= igrid <= ngrid - q (ngrid - 2q + 1 terms)
+     ! igrid - q <= kgrid <= igrid + q (        2q + 1 terms)
+     ! ======================================================
+     do igrid = max(ng0, fd_ohalf), min(ng1, ngrid - fd_ohalf)
+        tmp = wfn(igrid, ifun) * fd_coeff_in(0)
+        do k = 1, fd_ohalf
+           tmp = tmp + wfn(igrid - k, ifun) * fd_coeff_in(-k) &
+                   & + wfn(igrid + k, ifun) * fd_coeff_in(+k)
+        end do
+        hwfn(igrid, ifun) = hwfn(igrid, ifun) + tmp
+     end do
+
+     ! left boundary =====================
+     ! 0 <= igrid <=  q - 1 (     q terms)
+     ! 0 <= kgrid <= 2q + 1 (2q + 2 terms)
+     ! ===================================
+     do igrid = ng0, min(ng1, fd_ohalf - 1)
+        icoeff = igrid
+        tmp = czero
+        do k = 0, kmax
+           kgrid = k
+           tmp = tmp + wfn(kgrid, ifun) * fd_coeff_l(k, icoeff)
+        end do
+        hwfn(igrid, ifun) = hwfn(igrid, ifun) + tmp
+     end do
+
+     ! right boundary ================================
+     ! ngrid -  q + 1 <= igrid <= ngrid (     q terms)
+     ! ngrid - 2q - 1 <= kgrid <= ngrid (2q + 2 terms)
+     ! ===============================================
+     do igrid = max(ng0, ngrid - fd_ohalf + 1), ng1
+        icoeff = ngrid - igrid
+        tmp = czero
+        do k = 0, kmax
+           kgrid = ngrid - kmax + k
+           tmp = tmp + wfn(kgrid, ifun) * fd_coeff_r(k, icoeff)
+        end do
+        hwfn(igrid, ifun) = hwfn(igrid, ifun) + tmp
+     end do
+
+  end do
+
+end subroutine general_hprod_kinetic
+!######################################################################

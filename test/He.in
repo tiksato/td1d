@@ -1,0 +1,48 @@
+#
+$ROOT
+  Name = 'He'
+  ICal = -1
+$END
+
+$MOL
+  NAtom = 1
+  NAE = 1
+  NBE = 1
+  C = 0.0
+  Z = 2.0
+$END
+
+$WFN
+  Method = 'HF'
+  NFun = 8
+  NBlock = 2
+  Type_Block = 1, 3
+  NFun_Block = 1, 7
+$END
+
+$INIT
+  Guess_Type = 'LCAO'
+  DIStep = 0.005
+$END
+
+$FIELD
+  Env_Type = 'Sin2'
+  FWHM = 4.0 ! fs
+  WLen = 750.0 ! nm
+  FInt = 8.0E+14 ! W/cm2
+$END
+
+$PROP
+  Prop_Type = 'VRK5'
+  CycTot = 3 ! cycles
+  NStep = 10000 ! per cycle
+$END
+
+$GRID
+  NGrid = 512
+  DGrid = 0.2
+  Mask_Type = 'Cos4'
+  PMask = 0.85
+  RMax = 18.0
+  FD_Order = 8
+$END

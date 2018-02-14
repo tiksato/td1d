@@ -1,0 +1,7 @@
+TD1D_TOP = /Users/sato/pgm/github/td1d
+TD1D_CON = $(TD1D_TOP)/config
+TD1D_SRC = $(TD1D_TOP)/src
+
+F90  = gfortran
+FLAG = -fdefault-integer-8 -m64 -ffree-line-length-none -fopenmp -DUSE_BLAS -I/Users/sato/local/FFTW/include -O3
+LIB  = -L/Users/sato/local/LAPACK/lib -lrefblas -llapack -L/Users/sato/local/FFTW/lib -lfftw3

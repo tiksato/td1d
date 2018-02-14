@@ -1,0 +1,15 @@
+all: $(OBJ)
+
+clean:
+	rm -f $(OBJ) *.mod
+
+fullclean:
+	rm -f $(OBJ) *.mod *__genmod* *~
+
+.SUFFIXES: .F90 .o .mod
+
+.F90.o:
+	$(F90) $(FLAG) -I$(TD1D_SRC)/global -c $<
+	@echo
+
+%.o: %.mod
