@@ -1,5 +1,5 @@
 # td1d
-Hartree-Fock and time-dependent Hartree-Fock solver for a model one-dimensional electronic Hamiltonian.
+Time-dependent Hartree-Fock method for a model one-dimensional electronic Hamiltonian.
 (1) See and edit config/makeconfig
 (2) cd $TD1D_TOP/test
 (3) make
